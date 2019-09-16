@@ -65,17 +65,29 @@ class EmpModel:
 class NaiveModel:
     def __init__(self, shape, p_known=0.1, root=None):
         self.shape = shape
-        self.tr_x = np.random.binomial(1, p_known, size=(shape[0], shape[1] - 1)).astype(bool)
-        self.tr_y = np.random.binomial(1, p_known, size=(shape[0] - 1, shape[1])).astype(bool)
+        self.tr_x = np.random.binomial(1, p_known,
+            size=(shape[0], shape[1] - 1)).astype(bool)
+        self.tr_y = np.random.binomial(1, p_known,
+            size=(shape[0] - 1, shape[1])).astype(bool)
 
         self.init_state = root or [np.random.randint(s) for s in shape]
         self.init_mask = np.zeros(shape, dtype=bool)
         self.init_mask[self.init_state[0], self.init_state[1]] = True
 
-    @property
-    def reachable_states(self):
-        #init_states = self.trans.sum(0) > 0 # all inital states we know of
-        reachable_states = self.init_mask
+    def reachable_states(self, init_state=None):
+        if init_state is None:
+            connected = np.zeros(self.shape, dtype=bool)
+            connected[1:] |= self.tr_y
+            connected[:-1] |= self.tr_y
+            connected[:, 1:] |= self.tr_x
+            connected[:, :-1] |= self.tr_x
+            x, y = np.meshgrid(range(self.shape[1]), range(self.shape[0]))
+            ix, iy = x[connected].flatten(), y[connected].flatten()
+            return np.sum([
+                self.reachable_states(idx) for idx in zip(iy, ix)], axis=0
+                )
+        reachable_states = np.zeros(self.shape, dtype=bool)
+        reachable_states[init_state[0], init_state[1]] = True
         n_pre = 0
         while reachable_states.sum() > n_pre:
             n_pre = reachable_states.sum()
@@ -127,27 +139,30 @@ if __name__ == '__main__':
 
     # set up empowered agent
     # hack: make a's tree root one of the states known by b
-    root = (
-        np.random.choice(y[b.reachable_states]),
-        np.random.choice(x[b.reachable_states])
-        )
+    s = b.reachable_states() > 0
+    root = np.random.choice(y[s]), np.random.choice(x[s])
     a = EmpModel(size, root=root)
 
-    b_reach = [b.reachable_states]
+    b_reach = [b.reachable_states() > 0]
+    b_emp = [b.reachable_states().sum() / np.prod(size)]
     b_model = [(b.tr_x.copy(), b.tr_y.copy())]
     n_comm_tot = 0
     n_init = b_model[0][0].sum() + b_model[0][1].sum()
     while b_reach[-1].sum() < np.prod(size):
-        print('empowerment of B: %s' % b_reach[-1].sum())
-        tr_new = a.extend_reach(b_reach[-1])
+        print('total number of reachable states: %s' % b_reach[-1].sum())
+        print('empowerment of B: %s' % b_emp[-1])
+        #tr_new = a.extend_reach(b_reach[-1])
+        init_st = np.random.randint(size[0]), np.random.randint(size[1])
+        tr_new = a.extend_reach(b.reachable_states(init_st))
         n_comm = tr_new[0].sum() + tr_new[1].sum()
         n_comm_tot += n_comm
         print('communicating %s transitions' % n_comm)
         b.update_model(tr_new)
-        b_reach.append(b.reachable_states)
+        b_reach.append(b.reachable_states() > 0)
+        b_emp.append(b.reachable_states().sum() / np.prod(size))
         b_model.append((b.tr_x.copy(), b.tr_y.copy()))
 
-    print('final empowerment of B: %s' % b_reach[-1].sum())
+    print('final empowerment of B: %s' % b_emp[-1])
     print('transitions known initially: %s' % n_init)
     print('transitions communicated: %s' % n_comm_tot)
 
@@ -170,14 +185,33 @@ if __name__ == '__main__':
 
         n = len(b_reach)
         plt.figure(figsize=(3 * n, 3))
-        for i in range(n):
-            plt.subplot(2, n, i + 1)
-            plt.imshow(np.flipud(b_reach[i]), cmap='bone', vmin=0, vmax=1)
-            plt.xticks([])
-            plt.yticks([])
 
-            plt.subplot(2, n, n + i + 1)
+        ax = plt.subplot(1, n + 2, 1)
+        plot_model(a.trans)
+        plt.title('Emp. agent R')
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        for tic in ax.xaxis.get_major_ticks():
+            tic.tick1On = tic.tick2On = False
+        for tic in ax.yaxis.get_major_ticks():
+            tic.tick1On = tic.tick2On = False
+
+        for i in range(n):
+            #plt.subplot(2, n, i + 1)
+            #plt.imshow(np.flipud(b_reach[i]), cmap='bone', vmin=0, vmax=1)
+            #plt.xticks([])
+            #plt.yticks([])
+
+            ax = plt.subplot(1, n + 2, i + 1 + 2)
             plot_model(b_model[i])
+            plt.title('Iteration %s' % (i+1))
+            plt.xlabel(u'$\epsilon$ = %0.1f' % b_emp[i])
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            for tic in ax.xaxis.get_major_ticks():
+                tic.tick1On = tic.tick2On = False
+            for tic in ax.yaxis.get_major_ticks():
+                tic.tick1On = tic.tick2On = False
 
         plt.show()
 
